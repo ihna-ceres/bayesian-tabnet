@@ -258,6 +258,31 @@ class TabModel(BaseEstimator):
         # compute feature importance once the best model is defined
         self._compute_feature_importances(train_dataloader)
 
+    def mfvi_predict(self, X, sample_nbr):
+        self.network.eval()
+        self.network.unfreeze_model()
+
+        samples = []
+        for _ in range(sample_nbr):
+            dataloader = DataLoader(
+                PredictDataset(X),
+                batch_size=self.batch_size,
+                shuffle=False,
+            )
+
+            results = []
+            for batch_nb, data in enumerate(dataloader):
+                data = data.to(self.device).float()
+                output, M_loss = self.network(data)
+                predictions = output.cpu().detach().numpy()
+                results.append(predictions)
+            res = np.vstack(results)
+            sample = self.predict_func(res)
+            samples.append(sample)
+        predictions = np.stack(samples, axis=0)
+        return predictions.mean(axis=0), predictions.std(axis=0)
+
+
     def predict(self, X):
         """
         Make predictions on a batch (valid)
@@ -273,6 +298,7 @@ class TabModel(BaseEstimator):
             Predictions of the regression problem
         """
         self.network.eval()
+        self.network.freeze_model()
         dataloader = DataLoader(
             PredictDataset(X),
             batch_size=self.batch_size,
@@ -444,6 +470,7 @@ class TabModel(BaseEstimator):
             DataLoader with train set
         """
         self.network.train()
+        self.network.unfreeze_model()
 
         for batch_idx, (X, y) in enumerate(train_loader):
             self._callback_container.on_batch_begin(batch_idx)
