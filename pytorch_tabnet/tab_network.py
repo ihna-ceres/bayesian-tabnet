@@ -278,7 +278,8 @@ class TabNetDecoder(torch.nn.Module):
             self.feat_transformers.append(transformer)
 
         self.reconstruction_layer = BayesianLinear(n_d, self.input_dim, bias=False) if bayesian else Linear(n_d, self.input_dim, bias=False)
-        initialize_non_glu(self.reconstruction_layer, n_d, self.input_dim)
+        if not bayesian:
+            initialize_non_glu(self.reconstruction_layer, n_d, self.input_dim)
 
     def forward(self, steps_output):
         res = 0
@@ -477,14 +478,14 @@ class TabNetNoEmbeddings(torch.nn.Module):
                     task_mapping = BayesianLinear(n_d, task_dim, bias=False)
                 else:
                     task_mapping = Linear(n_d, task_dim, bias=False)
-                initialize_non_glu(task_mapping, n_d, task_dim)
+                    initialize_non_glu(task_mapping, n_d, task_dim)
                 self.multi_task_mappings.append(task_mapping)
         else:
             if bayesian:
                 self.final_mapping = BayesianLinear(n_d, output_dim, bias=False)
             else:
                 self.final_mapping = Linear(n_d, output_dim, bias=False)
-            initialize_non_glu(self.final_mapping, n_d, output_dim)
+                initialize_non_glu(self.final_mapping, n_d, output_dim)
 
     def forward(self, x):
         res = 0
@@ -641,7 +642,8 @@ class AttentiveTransformer(torch.nn.Module):
         """
         super(AttentiveTransformer, self).__init__()
         self.fc = BayesianLinear(input_dim, output_dim, bias=False) if bayesian else Linear(input_dim, output_dim, bias=False)
-        initialize_non_glu(self.fc, input_dim, output_dim)
+        if not bayesian:
+            initialize_non_glu(self.fc, input_dim, output_dim)
         self.bn = GBN(
             output_dim, virtual_batch_size=virtual_batch_size, momentum=momentum, bayesian=bayesian
         )
@@ -789,7 +791,8 @@ class GLU_Layer(torch.nn.Module):
             self.fc = fc
         else:
             self.fc = BayesianLinear(input_dim, 2 * output_dim, bias=False) if bayesian else Linear(input_dim, 2 * output_dim, bias=False)
-        initialize_glu(self.fc, input_dim, 2 * output_dim)
+        if not bayesian:
+            initialize_glu(self.fc, input_dim, 2 * output_dim)
 
         self.bn = GBN(
             2 * output_dim, virtual_batch_size=virtual_batch_size, momentum=momentum, bayesian=bayesian
