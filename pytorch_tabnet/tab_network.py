@@ -289,7 +289,7 @@ class TabNetDecoder(torch.nn.Module):
         res = self.reconstruction_layer(res)
         return res
 
-
+@variational_estimator
 class TabNetPretraining(torch.nn.Module):
     def __init__(
         self,
