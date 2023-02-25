@@ -58,7 +58,9 @@ class TabNetPretrainer(TabModel):
         drop_last=True,
         callbacks=None,
         pin_memory=True,
-        warm_start=False
+        warm_start=False,
+        sample_nbr=1,
+        complexity_cost_weight=1
     ):
         """Train a neural network stored in self.network
         Using train_dataloader for training data and
@@ -112,6 +114,8 @@ class TabNetPretrainer(TabModel):
         self._stop_training = False
         self.pin_memory = pin_memory and (self.device.type != "cpu")
         self.pretraining_ratio = pretraining_ratio
+        self.sample_nbr = sample_nbr
+        self.complexity_cost_weight = complexity_cost_weight
         eval_set = eval_set if eval_set else []
 
         if loss_fn is None:
@@ -272,6 +276,7 @@ class TabNetPretrainer(TabModel):
             DataLoader with train set
         """
         self.network.train()
+        self.network.unfreeze_()
 
         for batch_idx, X in enumerate(train_loader):
             self._callback_container.on_batch_begin(batch_idx)
@@ -307,9 +312,17 @@ class TabNetPretrainer(TabModel):
 
         for param in self.network.parameters():
             param.grad = None
-
-        output, embedded_x, obf_vars = self.network(X)
-        loss = self.compute_loss(output, embedded_x, obf_vars)
+        if self.bayesian:
+            loss_sum = 0
+            for _ in range(self.sample_nbr):
+                output, embedded_x, obf_vars = self.network(X)
+                loss = self.compute_loss(output, embedded_x, obf_vars)
+                loss += self.network.nn_kl_divergence() * self.complexity_cost_weight
+                loss_sum += loss
+            loss = loss_sum / self.sample_nbr
+        else:
+            output, embedded_x, obf_vars = self.network(X)
+            loss = self.compute_loss(output, embedded_x, obf_vars)
 
         # Perform backward pass and optimization
         loss.backward()
@@ -334,6 +347,7 @@ class TabNetPretrainer(TabModel):
         """
         # Setting network on evaluation mode
         self.network.eval()
+        self.network.freeze_()
 
         list_output = []
         list_embedded_x = []
@@ -392,6 +406,7 @@ class TabNetPretrainer(TabModel):
             Predictions of the regression problem
         """
         self.network.eval()
+        self.network.freeze_()
         dataloader = DataLoader(
             PredictDataset(X),
             batch_size=self.batch_size,
