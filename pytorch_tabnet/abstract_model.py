@@ -260,7 +260,7 @@ class TabModel(BaseEstimator):
 
     def mfvi_predict(self, X, sample_nbr):
         self.network.eval()
-        self.network.unfreeze_model()
+        self.network.unfreeze_()
 
         samples = []
         for _ in range(sample_nbr):
@@ -298,7 +298,7 @@ class TabModel(BaseEstimator):
             Predictions of the regression problem
         """
         self.network.eval()
-        self.network.freeze_model()
+        self.network.freeze_()
         dataloader = DataLoader(
             PredictDataset(X),
             batch_size=self.batch_size,
@@ -470,7 +470,7 @@ class TabModel(BaseEstimator):
             DataLoader with train set
         """
         self.network.train()
-        self.network.unfreeze_model()
+        self.network.unfreeze_()
 
         for batch_idx, (X, y) in enumerate(train_loader):
             self._callback_container.on_batch_begin(batch_idx)
