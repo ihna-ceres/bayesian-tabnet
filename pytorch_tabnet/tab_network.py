@@ -2,6 +2,9 @@ import torch
 from torch.nn import Linear, BatchNorm1d, ReLU
 import numpy as np
 from pytorch_tabnet import sparsemax
+from blitz.modules import BayesianLinear, BayesianEmbedding
+from blitz.losses import kl_divergence_from_nn
+from blitz.utils import variational_estimator
 
 
 def initialize_non_glu(module, input_dim, output_dim):
@@ -24,7 +27,7 @@ class GBN(torch.nn.Module):
     https://arxiv.org/abs/1705.08741
     """
 
-    def __init__(self, input_dim, virtual_batch_size=128, momentum=0.01):
+    def __init__(self, input_dim, virtual_batch_size=128, momentum=0.01, bayesian=False):
         super(GBN, self).__init__()
 
         self.input_dim = input_dim
@@ -53,6 +56,7 @@ class TabNetEncoder(torch.nn.Module):
         virtual_batch_size=128,
         momentum=0.02,
         mask_type="sparsemax",
+        bayesian=False
     ):
         """
         Defines main part of the TabNet network without the embedding layers.
@@ -105,11 +109,11 @@ class TabNetEncoder(torch.nn.Module):
             for i in range(self.n_shared):
                 if i == 0:
                     shared_feat_transform.append(
-                        Linear(self.input_dim, 2 * (n_d + n_a), bias=False)
+                        BayesianLinear(self.input_dim, 2 * (n_d + n_a), bias=False) if bayesian else Linear(self.input_dim, 2 * (n_d + n_a), bias=False)
                     )
                 else:
                     shared_feat_transform.append(
-                        Linear(n_d + n_a, 2 * (n_d + n_a), bias=False)
+                        BayesianLinear(n_d + n_a, 2 * (n_d + n_a), bias=False) if bayesian else Linear(n_d + n_a, 2 * (n_d + n_a), bias=False)
                     )
 
         else:
@@ -122,6 +126,7 @@ class TabNetEncoder(torch.nn.Module):
             n_glu_independent=self.n_independent,
             virtual_batch_size=self.virtual_batch_size,
             momentum=momentum,
+            bayesian=bayesian
         )
 
         self.feat_transformers = torch.nn.ModuleList()
@@ -135,6 +140,7 @@ class TabNetEncoder(torch.nn.Module):
                 n_glu_independent=self.n_independent,
                 virtual_batch_size=self.virtual_batch_size,
                 momentum=momentum,
+                bayesian=bayesian
             )
             attention = AttentiveTransformer(
                 n_a,
@@ -142,6 +148,7 @@ class TabNetEncoder(torch.nn.Module):
                 virtual_batch_size=self.virtual_batch_size,
                 momentum=momentum,
                 mask_type=self.mask_type,
+                bayesian=bayesian
             )
             self.feat_transformers.append(transformer)
             self.att_transformers.append(attention)
@@ -394,6 +401,7 @@ class TabNetNoEmbeddings(torch.nn.Module):
         virtual_batch_size=128,
         momentum=0.02,
         mask_type="sparsemax",
+        bayesian=False
     ):
         """
         Defines main part of the TabNet network without the embedding layers.
@@ -454,16 +462,23 @@ class TabNetNoEmbeddings(torch.nn.Module):
             virtual_batch_size=virtual_batch_size,
             momentum=momentum,
             mask_type=mask_type,
+            bayesian=bayesian
         )
 
         if self.is_multi_task:
             self.multi_task_mappings = torch.nn.ModuleList()
             for task_dim in output_dim:
-                task_mapping = Linear(n_d, task_dim, bias=False)
+                if bayesian:
+                    task_mapping = BayesianLinear(n_d, task_dim, bias=False)
+                else:
+                    task_mapping = Linear(n_d, task_dim, bias=False)
                 initialize_non_glu(task_mapping, n_d, task_dim)
                 self.multi_task_mappings.append(task_mapping)
         else:
-            self.final_mapping = Linear(n_d, output_dim, bias=False)
+            if bayesian:
+                self.final_mapping = BayesianLinear(n_d, output_dim, bias=False)
+            else:
+                self.final_mapping = Linear(n_d, output_dim, bias=False)
             initialize_non_glu(self.final_mapping, n_d, output_dim)
 
     def forward(self, x):
@@ -483,7 +498,7 @@ class TabNetNoEmbeddings(torch.nn.Module):
     def forward_masks(self, x):
         return self.encoder.forward_masks(x)
 
-
+@variational_estimator
 class TabNet(torch.nn.Module):
     def __init__(
         self,
@@ -502,6 +517,7 @@ class TabNet(torch.nn.Module):
         virtual_batch_size=128,
         momentum=0.02,
         mask_type="sparsemax",
+        bayesian=False
     ):
         """
         Defines TabNet network
@@ -564,7 +580,7 @@ class TabNet(torch.nn.Module):
             raise ValueError("n_shared and n_independent can't be both zero.")
 
         self.virtual_batch_size = virtual_batch_size
-        self.embedder = EmbeddingGenerator(input_dim, cat_dims, cat_idxs, cat_emb_dim)
+        self.embedder = EmbeddingGenerator(input_dim, cat_dims, cat_idxs, cat_emb_dim, bayesian)
         self.post_embed_dim = self.embedder.post_embed_dim
         self.tabnet = TabNetNoEmbeddings(
             self.post_embed_dim,
@@ -579,6 +595,7 @@ class TabNet(torch.nn.Module):
             virtual_batch_size,
             momentum,
             mask_type,
+            bayesian
         )
 
     def forward(self, x):
@@ -598,6 +615,7 @@ class AttentiveTransformer(torch.nn.Module):
         virtual_batch_size=128,
         momentum=0.02,
         mask_type="sparsemax",
+        bayesian=False
     ):
         """
         Initialize an attention transformer.
@@ -616,10 +634,10 @@ class AttentiveTransformer(torch.nn.Module):
             Either "sparsemax" or "entmax" : this is the masking function to use
         """
         super(AttentiveTransformer, self).__init__()
-        self.fc = Linear(input_dim, output_dim, bias=False)
+        self.fc = BayesianLinear(input_dim, output_dim, bias=False) if bayesian else Linear(input_dim, output_dim, bias=False)
         initialize_non_glu(self.fc, input_dim, output_dim)
         self.bn = GBN(
-            output_dim, virtual_batch_size=virtual_batch_size, momentum=momentum
+            output_dim, virtual_batch_size=virtual_batch_size, momentum=momentum, bayesian=bayesian
         )
 
         if mask_type == "sparsemax":
@@ -650,6 +668,7 @@ class FeatTransformer(torch.nn.Module):
         n_glu_independent,
         virtual_batch_size=128,
         momentum=0.02,
+        bayesian=False
     ):
         super(FeatTransformer, self).__init__()
         """
@@ -690,6 +709,7 @@ class FeatTransformer(torch.nn.Module):
                 n_glu=len(shared_layers),
                 virtual_batch_size=virtual_batch_size,
                 momentum=momentum,
+                bayesian=bayesian
             )
             is_first = False
 
@@ -699,7 +719,7 @@ class FeatTransformer(torch.nn.Module):
         else:
             spec_input_dim = input_dim if is_first else output_dim
             self.specifics = GLU_Block(
-                spec_input_dim, output_dim, first=is_first, **params
+                spec_input_dim, output_dim, first=is_first, bayesian=bayesian, **params
             )
 
     def forward(self, x):
@@ -722,6 +742,7 @@ class GLU_Block(torch.nn.Module):
         shared_layers=None,
         virtual_batch_size=128,
         momentum=0.02,
+        bayesian=False
     ):
         super(GLU_Block, self).__init__()
         self.first = first
@@ -732,10 +753,10 @@ class GLU_Block(torch.nn.Module):
         params = {"virtual_batch_size": virtual_batch_size, "momentum": momentum}
 
         fc = shared_layers[0] if shared_layers else None
-        self.glu_layers.append(GLU_Layer(input_dim, output_dim, fc=fc, **params))
+        self.glu_layers.append(GLU_Layer(input_dim, output_dim, fc=fc, bayesian=bayesian, **params))
         for glu_id in range(1, self.n_glu):
             fc = shared_layers[glu_id] if shared_layers else None
-            self.glu_layers.append(GLU_Layer(output_dim, output_dim, fc=fc, **params))
+            self.glu_layers.append(GLU_Layer(output_dim, output_dim, fc=fc, bayesian=bayesian, **params))
 
     def forward(self, x):
         scale = torch.sqrt(torch.FloatTensor([0.5]).to(x.device))
@@ -753,7 +774,7 @@ class GLU_Block(torch.nn.Module):
 
 class GLU_Layer(torch.nn.Module):
     def __init__(
-        self, input_dim, output_dim, fc=None, virtual_batch_size=128, momentum=0.02
+        self, input_dim, output_dim, fc=None, virtual_batch_size=128, momentum=0.02, bayesian=False
     ):
         super(GLU_Layer, self).__init__()
 
@@ -761,11 +782,11 @@ class GLU_Layer(torch.nn.Module):
         if fc:
             self.fc = fc
         else:
-            self.fc = Linear(input_dim, 2 * output_dim, bias=False)
+            self.fc = BayesianLinear(input_dim, 2 * output_dim, bias=False) if bayesian else Linear(input_dim, 2 * output_dim, bias=False)
         initialize_glu(self.fc, input_dim, 2 * output_dim)
 
         self.bn = GBN(
-            2 * output_dim, virtual_batch_size=virtual_batch_size, momentum=momentum
+            2 * output_dim, virtual_batch_size=virtual_batch_size, momentum=momentum, bayesian=bayesian
         )
 
     def forward(self, x):
@@ -780,7 +801,7 @@ class EmbeddingGenerator(torch.nn.Module):
     Classical embeddings generator
     """
 
-    def __init__(self, input_dim, cat_dims, cat_idxs, cat_emb_dim):
+    def __init__(self, input_dim, cat_dims, cat_idxs, cat_emb_dim, bayesian):
         """This is an embedding module for an entire set of features
 
         Parameters
@@ -834,7 +855,10 @@ class EmbeddingGenerator(torch.nn.Module):
         self.cat_emb_dims = [self.cat_emb_dims[i] for i in sorted_idxs]
 
         for cat_dim, emb_dim in zip(cat_dims, self.cat_emb_dims):
-            self.embeddings.append(torch.nn.Embedding(cat_dim, emb_dim))
+            if bayesian:
+                self.embeddings.append(BayesianEmbedding(cat_dim, emb_dim))
+            else:
+                self.embeddings.append(torch.nn.Embedding(cat_dim, emb_dim))
 
         # record continuous indices
         self.continuous_idx = torch.ones(input_dim, dtype=torch.bool)
