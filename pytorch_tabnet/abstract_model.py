@@ -208,7 +208,6 @@ class TabModel(BaseEstimator):
 
         # Validate and reformat eval set depending on training data
         eval_names, eval_set = validate_eval_set(eval_set, eval_name, X_train, y_train)
-
         train_dataloader, valid_dataloaders = self._construct_loaders(
             X_train, y_train, eval_set
         )
@@ -552,6 +551,7 @@ class TabModel(BaseEstimator):
         """
         # Setting network on evaluation mode
         self.network.eval()
+        self.network.freeze_()
 
         list_y_true = []
         list_y_score = []
