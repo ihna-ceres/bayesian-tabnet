@@ -217,6 +217,7 @@ class TabNetDecoder(torch.nn.Module):
         n_shared=1,
         virtual_batch_size=128,
         momentum=0.02,
+        bayesian=False
     ):
         """
         Defines main part of the TabNet network without the embedding layers.
@@ -257,9 +258,9 @@ class TabNetDecoder(torch.nn.Module):
             shared_feat_transform = torch.nn.ModuleList()
             for i in range(self.n_shared):
                 if i == 0:
-                    shared_feat_transform.append(Linear(n_d, 2 * n_d, bias=False))
+                    shared_feat_transform.append(BayesianLinear(n_d, 2 * n_d, bias=False) if bayesian else Linear(n_d, 2 * n_d, bias=False))
                 else:
-                    shared_feat_transform.append(Linear(n_d, 2 * n_d, bias=False))
+                    shared_feat_transform.append(BayesianLinear(n_d, 2 * n_d, bias=False) if bayesian else Linear(n_d, 2 * n_d, bias=False))
 
         else:
             shared_feat_transform = None
@@ -272,10 +273,11 @@ class TabNetDecoder(torch.nn.Module):
                 n_glu_independent=self.n_independent,
                 virtual_batch_size=self.virtual_batch_size,
                 momentum=momentum,
+                bayesian=bayesian
             )
             self.feat_transformers.append(transformer)
 
-        self.reconstruction_layer = Linear(n_d, self.input_dim, bias=False)
+        self.reconstruction_layer = BayesianLinear(n_d, self.input_dim, bias=False) if bayesian else Linear(n_d, self.input_dim, bias=False)
         initialize_non_glu(self.reconstruction_layer, n_d, self.input_dim)
 
     def forward(self, steps_output):
@@ -307,6 +309,7 @@ class TabNetPretraining(torch.nn.Module):
         mask_type="sparsemax",
         n_shared_decoder=1,
         n_indep_decoder=1,
+        bayesian=False
     ):
         super(TabNetPretraining, self).__init__()
 
@@ -333,7 +336,7 @@ class TabNetPretraining(torch.nn.Module):
             raise ValueError("n_shared and n_independent can't be both zero.")
 
         self.virtual_batch_size = virtual_batch_size
-        self.embedder = EmbeddingGenerator(input_dim, cat_dims, cat_idxs, cat_emb_dim)
+        self.embedder = EmbeddingGenerator(input_dim, cat_dims, cat_idxs, cat_emb_dim, bayesian)
         self.post_embed_dim = self.embedder.post_embed_dim
 
         self.masker = RandomObfuscator(self.pretraining_ratio)
@@ -350,6 +353,7 @@ class TabNetPretraining(torch.nn.Module):
             virtual_batch_size=virtual_batch_size,
             momentum=momentum,
             mask_type=mask_type,
+            bayesian=bayesian
         )
         self.decoder = TabNetDecoder(
             self.post_embed_dim,
@@ -359,6 +363,7 @@ class TabNetPretraining(torch.nn.Module):
             n_shared=self.n_shared_decoder,
             virtual_batch_size=virtual_batch_size,
             momentum=momentum,
+            bayesian=bayesian
         )
 
     def forward(self, x):
