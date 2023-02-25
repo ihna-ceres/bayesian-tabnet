@@ -126,7 +126,9 @@ class TabModel(BaseEstimator):
         callbacks=None,
         pin_memory=True,
         from_unsupervised=None,
-        warm_start=False
+        warm_start=False,
+        sample_nbr=1,
+        complexity_cost_weight=1
     ):
         """Train a neural network stored in self.network
         Using train_dataloader for training data and
@@ -184,6 +186,8 @@ class TabModel(BaseEstimator):
         self.input_dim = X_train.shape[1]
         self._stop_training = False
         self.pin_memory = pin_memory and (self.device.type != "cpu")
+        self.sample_nbr = sample_nbr
+        self.complexity_cost_weight = complexity_cost_weight
 
         eval_set = eval_set if eval_set else []
 
@@ -479,11 +483,24 @@ class TabModel(BaseEstimator):
         for param in self.network.parameters():
             param.grad = None
 
-        output, M_loss = self.network(X)
+        if self.bayesian:
+            loss_sum = 0
+            for _ in range(self.sample_nbr):
+                output, M_loss = self.network(X)
 
-        loss = self.compute_loss(output, y)
-        # Add the overall sparsity loss
-        loss = loss - self.lambda_sparse * M_loss
+                loss = self.compute_loss(output, y)
+                # Add the overall sparsity loss
+                loss = loss - self.lambda_sparse * M_loss
+                loss += self.network.nn_kl_divergence() * self.complexity_cost_weight
+                loss_sum += loss
+            loss = loss_sum / self.sample_nbr
+
+        else:
+            output, M_loss = self.network(X)
+
+            loss = self.compute_loss(output, y)
+            # Add the overall sparsity loss
+            loss = loss - self.lambda_sparse * M_loss
 
         # Perform backward pass and optimization
         loss.backward()

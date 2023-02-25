@@ -597,6 +597,7 @@ class TabNet(torch.nn.Module):
             mask_type,
             bayesian
         )
+        self.bayesian = bayesian
 
     def forward(self, x):
         x = self.embedder(x)
