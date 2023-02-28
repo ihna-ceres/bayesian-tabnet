@@ -468,7 +468,7 @@ class TabNetNoEmbeddings(torch.nn.Module):
             virtual_batch_size=virtual_batch_size,
             momentum=momentum,
             mask_type=mask_type,
-            bayesian=bayesian
+            bayesian=False
         )
 
         if self.is_multi_task:
